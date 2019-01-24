@@ -88,6 +88,7 @@ type joinFederationOptions struct {
 	secretName     string
 	addToRegistry  bool
 	limitedScope   bool
+	idempotent     bool
 }
 
 // Bind adds the join specific arguments to the flagset passed in as an
@@ -101,6 +102,8 @@ func (o *joinFederationOptions) Bind(flags *pflag.FlagSet) {
 		"Add the cluster to the cluster registry that is aggregated with the kubernetes API server running in the host cluster context.")
 	flags.BoolVar(&o.limitedScope, "limited-scope", false,
 		"Whether the federation namespace (configurable via --federation-namespace) will be the only target for federation.  If true, join will add a service account with access only to the federation namespace in the target cluster.")
+	flags.BoolVar(&o.idempotent, "idempotent", false,
+		"Whether the join operation will honor existing resources and create only the ones that are not present. If false (the default), the join operation will fail when trying to create resources that already exist.")
 }
 
 // NewCmdJoin defines the `join` command that joins a cluster to a
@@ -169,7 +172,7 @@ func (j *joinFederation) Run(cmdOut io.Writer, config util.FedConfig) error {
 	}
 
 	return JoinCluster(hostConfig, clusterConfig, j.FederationNamespace, j.ClusterNamespace,
-		j.HostClusterContext, j.ClusterName, j.secretName, j.addToRegistry, j.limitedScope, j.DryRun, false)
+		j.HostClusterContext, j.ClusterName, j.secretName, j.addToRegistry, j.limitedScope, j.DryRun, j.idempotent)
 }
 
 // JoinCluster performs all the necessary steps to join a cluster to the
@@ -217,7 +220,7 @@ func JoinCluster(hostConfig, clusterConfig *rest.Config, federationNamespace, cl
 
 	glog.V(2).Infof("Creating %s namespace in joining cluster", federationNamespace)
 	_, err = createFederationNamespace(clusterClientset, federationNamespace,
-		joiningClusterName, dryRun, idempotent)
+		joiningClusterName, dryRun)
 	if err != nil {
 		glog.V(2).Infof("Error creating %s namespace in joining cluster: %v",
 			federationNamespace, err)
@@ -265,7 +268,12 @@ func performPreflightChecks(clusterClientset client.Interface, name, hostCluster
 	} else if err != nil {
 		return err
 	} else if sa != nil {
-		return errors.Errorf("service account: %s already exists in joining cluster: %s", saName, name)
+		if idempotent {
+			glog.V(2).Infof("Service account %s already exists in joining cluster %s", saName, name)
+			return nil
+		} else {
+			return fmt.Errorf("service account: %s already exists in joining cluster: %s", saName, name)
+		}
 	}
 
 	return nil
@@ -351,6 +359,7 @@ func registerCluster(crClientset *crclient.Clientset, clusterNamespace, host, jo
 
 	cluster, err := crClientset.ClusterregistryV1alpha1().Clusters(clusterNamespace).Create(cluster)
 	if idempotent && errors.IsAlreadyExists(err) {
+		glog.V(2).Infof("Cluster %s already exists in the cluster registry", joiningClusterName)
 		return cluster, nil
 	}
 	return cluster, err
@@ -380,6 +389,7 @@ func createFederatedCluster(fedClientset *fedclient.Clientset, joiningClusterNam
 
 	fedCluster, err := fedClientset.CoreV1alpha1().FederatedClusters(federationNamespace).Create(fedCluster)
 	if idempotent && errors.IsAlreadyExists(err) {
+		glog.V(2).Infof("Federated cluster %s already exists in host cluster", joiningClusterName)
 		return fedCluster, nil
 	}
 	return fedCluster, err
@@ -388,7 +398,7 @@ func createFederatedCluster(fedClientset *fedclient.Clientset, joiningClusterNam
 // createFederationNamespace creates the federation namespace in the cluster
 // associated with clusterClientset, if it doesn't already exist.
 func createFederationNamespace(clusterClientset client.Interface, federationNamespace,
-	joiningClusterName string, dryRun, idempotent bool) (*corev1.Namespace, error) {
+	joiningClusterName string, dryRun bool) (*corev1.Namespace, error) {
 	federationNS := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: federationNamespace,
@@ -500,6 +510,7 @@ func createServiceAccount(clusterClientset client.Interface, namespace,
 	_, err := clusterClientset.CoreV1().ServiceAccounts(namespace).Create(sa)
 	if err != nil {
 		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Service account %s/%s already exists in target cluster %s", saName, namespace, joiningClusterName)
 			return saName, nil
 		}
 		return "", err
@@ -536,10 +547,14 @@ func createClusterRoleAndBinding(clientset client.Interface, saName, namespace, 
 		Rules: clusterPolicyRules,
 	}
 	_, err := clientset.RbacV1().ClusterRoles().Create(role)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create cluster role for service account: %s in joining cluster: %s due to: %v",
-			saName, clusterName, err)
-		return err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Cluster role for service account %s already exists in joining cluster %s", saName, clusterName)
+		} else {
+			glog.V(2).Infof("Could not create cluster role for service account: %s in joining cluster: %s due to: %v",
+				saName, clusterName, err)
+			return err
+		}
 	}
 
 	// TODO: This should limit its access to only necessary resources.
@@ -555,10 +570,14 @@ func createClusterRoleAndBinding(clientset client.Interface, saName, namespace, 
 		},
 	}
 	_, err = clientset.RbacV1().ClusterRoleBindings().Create(binding)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create cluster role binding for service account: %s in joining cluster: %s due to: %v",
-			saName, clusterName, err)
-		return err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Cluster role binding for service account %s already exists in joining cluster %s", saName, clusterName)
+		} else {
+			glog.V(2).Infof("Could not create cluster role binding for service account: %s in joining cluster: %s due to: %v",
+				saName, clusterName, err)
+			return err
+		}
 	}
 
 	return nil
@@ -581,10 +600,14 @@ func createRoleAndBinding(clientset client.Interface, saName, namespace, cluster
 		Rules: namespacedPolicyRules,
 	}
 	_, err := clientset.RbacV1().Roles(namespace).Create(role)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create role for service account: %s in joining cluster: %s due to: %v",
-			saName, clusterName, err)
-		return err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Role for service account %s in joining cluster %s already exists", saName, clusterName)
+		} else {
+			glog.V(2).Infof("Could not create role for service account: %s in joining cluster: %s due to: %v",
+				saName, clusterName, err)
+			return err
+		}
 	}
 
 	binding := &rbacv1.RoleBinding{
@@ -599,10 +622,14 @@ func createRoleAndBinding(clientset client.Interface, saName, namespace, cluster
 		},
 	}
 	_, err = clientset.RbacV1().RoleBindings(namespace).Create(binding)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create role binding for service account: %s in joining cluster: %s due to: %v",
-			saName, clusterName, err)
-		return err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Role binding for service account %s in joining cluster %s already exists", saName, clusterName)
+		} else {
+			glog.V(2).Infof("Could not create role binding for service account: %s in joining cluster: %s due to: %v",
+				saName, clusterName, err)
+			return err
+		}
 	}
 
 	return nil
@@ -637,10 +664,15 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 		},
 	}
 	_, err := clientset.RbacV1().ClusterRoles().Create(role)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create health check cluster role for service account: %s in joining cluster: %s due to: %v",
-			saName, clusterName, err)
-		return err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Health check cluster role for service account %s already exists in joining cluster %s", saName, clusterName)
+
+		} else {
+			glog.V(2).Infof("Could not create health check cluster role for service account: %s in joining cluster: %s due to: %v",
+				saName, clusterName, err)
+			return err
+		}
 	}
 
 	binding := rbacv1.ClusterRoleBinding{
@@ -655,10 +687,14 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 		},
 	}
 	_, err = clientset.RbacV1().ClusterRoleBindings().Create(&binding)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
-			saName, clusterName, err)
-		return err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Health check cluster role binding for service account %s already exists in joining cluster %s", saName, clusterName)
+		} else {
+			glog.V(2).Infof("Could not create health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
+				saName, clusterName, err)
+			return err
+		}
 	}
 
 	return nil
@@ -722,9 +758,13 @@ func populateSecretInHostCluster(clusterClientset, hostClientset client.Interfac
 	}
 
 	v1SecretResult, err := hostClientset.CoreV1().Secrets(namespace).Create(&v1Secret)
-	if err != nil && !(idempotent && errors.IsAlreadyExists(err)) {
-		glog.V(2).Infof("Could not create secret in host cluster: %v", err)
-		return nil, err
+	if err != nil {
+		if idempotent && errors.IsAlreadyExists(err) {
+			glog.V(2).Infof("Secret %s already exists in host cluster", secretName)
+		} else {
+			glog.V(2).Infof("Could not create secret in host cluster: %v", err)
+			return nil, err
+		}
 	}
 
 	if err == nil {
