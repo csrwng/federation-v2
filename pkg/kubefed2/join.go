@@ -264,12 +264,12 @@ func performPreflightChecks(clusterClientset client.Interface, name, hostCluster
 		metav1.GetOptions{})
 
 	switch {
-	case errors.IsNotFound(err):
+	case apierrors.IsNotFound(err):
 		return nil
 	case err != nil:
 		return err
 	case err == nil && errorOnExisting:
-		return fmt.Errorf("service account: %s already exists in joining cluster: %s", saName, name)
+		return errors.Errorf("service account: %s already exists in joining cluster: %s", saName, name)
 	default:
 		glog.V(2).Infof("Service account %s already exists in joining cluster %s", saName, name)
 		return nil
@@ -358,11 +358,11 @@ func registerCluster(crClientset crclient.Interface, clusterNamespace, host, joi
 
 	existingCluster, err := crClientset.ClusterregistryV1alpha1().Clusters(clusterNamespace).Get(cluster.Name, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Cannot retrieve cluster registry cluster %s due to %v", cluster.Name, err)
 		return nil, err
 	case err == nil && errorOnExisting:
-		return nil, fmt.Errorf("cluster registry cluster %s already exists", cluster.Name)
+		return nil, errors.Errorf("cluster registry cluster %s already exists", cluster.Name)
 	case err == nil:
 		existingCluster.Spec = cluster.Spec
 		glog.V(2).Infof("Updating existing cluster registry cluster %s", cluster.Name)
@@ -397,11 +397,11 @@ func createFederatedCluster(fedClientset fedclient.Interface, joiningClusterName
 
 	existingFedCluster, err := fedClientset.CoreV1alpha1().FederatedClusters(federationNamespace).Get(joiningClusterName, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not retrieve federated cluster %s due to %v", joiningClusterName, err)
 		return nil, err
 	case err == nil && errorOnExisting:
-		return nil, fmt.Errorf("federated cluster %s already exists in host cluster", joiningClusterName)
+		return nil, errors.Errorf("federated cluster %s already exists in host cluster", joiningClusterName)
 	case err == nil:
 		existingFedCluster.Spec = fedCluster.Spec
 		fedCluster, err := fedClientset.CoreV1alpha1().FederatedClusters(federationNamespace).Update(fedCluster)
@@ -534,10 +534,10 @@ func createServiceAccount(clusterClientset client.Interface, namespace,
 	// Create a new service account.
 	_, err := clusterClientset.CoreV1().ServiceAccounts(namespace).Create(sa)
 	switch {
-	case errors.IsAlreadyExists(err) && errorOnExisting:
+	case apierrors.IsAlreadyExists(err) && errorOnExisting:
 		glog.V(2).Infof("Service account %s/%s already exists in target cluster %s", namespace, saName, joiningClusterName)
 		return "", err
-	case err != nil && !errors.IsAlreadyExists(err):
+	case err != nil && !apierrors.IsAlreadyExists(err):
 		glog.V(2).Infof("Could not create service account %s/%s in target cluster %s due to: %v", namespace, saName, joiningClusterName, err)
 		return "", err
 	default:
@@ -574,12 +574,12 @@ func createClusterRoleAndBinding(clientset client.Interface, saName, namespace, 
 	}
 	existingRole, err := clientset.RbacV1().ClusterRoles().Get(roleName, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not get cluster role for service account %s in joining cluster %s due to %v",
 			saName, clusterName, err)
 		return err
 	case err == nil && errorOnExisting:
-		return fmt.Errorf("cluster role for service account %s in joining cluster %s already exists", saName, clusterName)
+		return errors.Errorf("cluster role for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
 		existingRole.Rules = role.Rules
 		_, err := clientset.RbacV1().ClusterRoles().Update(existingRole)
@@ -611,12 +611,12 @@ func createClusterRoleAndBinding(clientset client.Interface, saName, namespace, 
 	}
 	existingBinding, err := clientset.RbacV1().ClusterRoleBindings().Get(binding.Name, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not get cluster role binding for service account %s in joining cluster %s due to %v",
 			saName, clusterName, err)
 		return err
 	case err == nil && errorOnExisting:
-		return fmt.Errorf("cluster role binding for service account %s in joining cluster %s already exists", saName, clusterName)
+		return errors.Errorf("cluster role binding for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
 		existingBinding.Subjects = binding.Subjects
 		existingBinding.RoleRef = binding.RoleRef
@@ -655,11 +655,11 @@ func createRoleAndBinding(clientset client.Interface, saName, namespace, cluster
 	}
 	existingRole, err := clientset.RbacV1().Roles(namespace).Get(roleName, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not retrieve role for service account %s in joining cluster %s due to %v", saName, clusterName, err)
 		return err
 	case errorOnExisting && err == nil:
-		return fmt.Errorf("role for service account %s in joining cluster %s already exists", saName, clusterName)
+		return errors.Errorf("role for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
 		existingRole.Rules = role.Rules
 		_, err = clientset.RbacV1().Roles(namespace).Update(existingRole)
@@ -691,12 +691,12 @@ func createRoleAndBinding(clientset client.Interface, saName, namespace, cluster
 
 	existingBinding, err := clientset.RbacV1().RoleBindings(namespace).Get(binding.Name, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not retrieve role binding for service account %s in joining cluster %s due to: %v",
 			saName, clusterName, err)
 		return err
 	case err == nil && errorOnExisting:
-		return fmt.Errorf("role binding for service account %s in joining cluster %s already exists", saName, clusterName)
+		return errors.Errorf("role binding for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
 		existingBinding.Subjects = binding.Subjects
 		existingBinding.RoleRef = binding.RoleRef
@@ -748,12 +748,12 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 	}
 	existingRole, err := clientset.RbacV1().ClusterRoles().Get(role.Name, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not get health check cluster role for service account %s in joining cluster %s due to %v",
 			saName, clusterName, err)
 		return err
 	case err == nil && errorOnExisting:
-		return fmt.Errorf("health check cluster role for service account %s in joining cluster %s already exists", saName, clusterName)
+		return errors.Errorf("health check cluster role for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
 		existingRole.Rules = role.Rules
 		_, err := clientset.RbacV1().ClusterRoles().Update(existingRole)
@@ -784,12 +784,12 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 	}
 	existingBinding, err := clientset.RbacV1().ClusterRoleBindings().Get(binding.Name, metav1.GetOptions{})
 	switch {
-	case err != nil && !errors.IsNotFound(err):
+	case err != nil && !apierrors.IsNotFound(err):
 		glog.V(2).Infof("Could not get health check cluster role binding for service account %s in joining cluster %s due to %v",
 			saName, clusterName, err)
 		return err
 	case err == nil && errorOnExisting:
-		return fmt.Errorf("health check cluster role binding for service account %s in joining cluster %s already exists", saName, clusterName)
+		return errors.Errorf("health check cluster role binding for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
 		existingBinding.Subjects = binding.Subjects
 		existingBinding.RoleRef = binding.RoleRef
@@ -870,11 +870,11 @@ func populateSecretInHostCluster(clusterClientset, hostClientset client.Interfac
 	if secretName != "" {
 		existingSecret, err := hostClientset.CoreV1().Secrets(namespace).Get(secretName, metav1.GetOptions{})
 		switch {
-		case err != nil && !errors.IsNotFound(err):
+		case err != nil && !apierrors.IsNotFound(err):
 			glog.V(2).Infof("Could not get secret %s in host cluster: %v", secretName, err)
 			return nil, err
 		case err == nil && errorOnExisting:
-			return nil, fmt.Errorf("secret %s already exists in host cluster", secretName)
+			return nil, errors.Errorf("secret %s already exists in host cluster", secretName)
 		case err == nil:
 			existingSecret.Data = v1Secret.Data
 			v1SecretResult, err := hostClientset.CoreV1().Secrets(namespace).Update(existingSecret)
@@ -889,7 +889,7 @@ func populateSecretInHostCluster(clusterClientset, hostClientset client.Interfac
 	v1SecretResult, err := hostClientset.CoreV1().Secrets(namespace).Create(&v1Secret)
 	if err != nil {
 		glog.V(2).Infof("Could not create secret in host cluster: %v", err)
-		return nil, fmt.Errorf("could not create secret in host cluster: %v", err)
+		return nil, errors.Errorf("could not create secret in host cluster: %v", err)
 	}
 
 	glog.V(2).Infof("Created secret in host cluster named: %s", v1SecretResult.Name)
