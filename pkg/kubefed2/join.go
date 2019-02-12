@@ -18,6 +18,7 @@ package kubefed2
 
 import (
 	"io"
+	"reflect"
 	"time"
 
 	"github.com/golang/glog"
@@ -618,18 +619,34 @@ func createClusterRoleAndBinding(clientset client.Interface, saName, namespace, 
 	case err == nil && errorOnExisting:
 		return errors.Errorf("cluster role binding for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
-		existingBinding.Subjects = binding.Subjects
-		existingBinding.RoleRef = binding.RoleRef
-		_, err := clientset.RbacV1().ClusterRoleBindings().Update(existingBinding)
-		if err != nil {
-			glog.V(2).Infof("Could not update cluster role binding for service account: %s in joining cluster: %s due to: %v",
-				saName, clusterName, err)
-			return err
+		// The roleRef cannot be updated, therefore if the existing roleRef is different, the existing rolebinding
+		// must be deleted and recreated with the correct roleRef
+		if !reflect.DeepEqual(existingBinding.RoleRef, binding.RoleRef) {
+			err = clientset.RbacV1().ClusterRoleBindings().Delete(existingBinding.Name, &metav1.DeleteOptions{})
+			if err != nil {
+				glog.V(2).Infof("Could not delete existing cluster role binding for service account %s in joining cluster %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
+			_, err = clientset.RbacV1().ClusterRoleBindings().Create(binding)
+			if err != nil {
+				glog.V(2).Infof("Could not create cluster role binding for service account: %s in joining cluster: %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
+		} else {
+			existingBinding.Subjects = binding.Subjects
+			_, err := clientset.RbacV1().ClusterRoleBindings().Update(existingBinding)
+			if err != nil {
+				glog.V(2).Infof("Could not update cluster role binding for service account: %s in joining cluster: %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
 		}
 	default:
 		_, err = clientset.RbacV1().ClusterRoleBindings().Create(binding)
 		if err != nil {
-			glog.V(2).Infof("Could not create health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
+			glog.V(2).Infof("Could not create cluster role binding for service account: %s in joining cluster: %s due to: %v",
 				saName, clusterName, err)
 			return err
 		}
@@ -698,13 +715,29 @@ func createRoleAndBinding(clientset client.Interface, saName, namespace, cluster
 	case err == nil && errorOnExisting:
 		return errors.Errorf("role binding for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
-		existingBinding.Subjects = binding.Subjects
-		existingBinding.RoleRef = binding.RoleRef
-		_, err = clientset.RbacV1().RoleBindings(namespace).Update(existingBinding)
-		if err != nil {
-			glog.V(2).Infof("Could not update role binding for service account %s in joining cluster %s due to: %v",
-				saName, clusterName, err)
-			return err
+		// The roleRef cannot be updated, therefore if the existing roleRef is different, the existing rolebinding
+		// must be deleted and recreated with the correct roleRef
+		if !reflect.DeepEqual(existingBinding.RoleRef, binding.RoleRef) {
+			err = clientset.RbacV1().RoleBindings(namespace).Delete(existingBinding.Name, &metav1.DeleteOptions{})
+			if err != nil {
+				glog.V(2).Infof("Could not delete existing role binding for service account %s in joining cluster %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
+			_, err = clientset.RbacV1().RoleBindings(namespace).Create(binding)
+			if err != nil {
+				glog.V(2).Infof("Could not create role binding for service account: %s in joining cluster: %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
+		} else {
+			existingBinding.Subjects = binding.Subjects
+			_, err = clientset.RbacV1().RoleBindings(namespace).Update(existingBinding)
+			if err != nil {
+				glog.V(2).Infof("Could not update role binding for service account %s in joining cluster %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
 		}
 	default:
 		_, err = clientset.RbacV1().RoleBindings(namespace).Create(binding)
@@ -771,7 +804,7 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 		}
 	}
 
-	binding := rbacv1.ClusterRoleBinding{
+	binding := &rbacv1.ClusterRoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: roleName,
 		},
@@ -791,16 +824,32 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 	case err == nil && errorOnExisting:
 		return errors.Errorf("health check cluster role binding for service account %s in joining cluster %s already exists", saName, clusterName)
 	case err == nil:
-		existingBinding.Subjects = binding.Subjects
-		existingBinding.RoleRef = binding.RoleRef
-		_, err := clientset.RbacV1().ClusterRoleBindings().Update(existingBinding)
-		if err != nil {
-			glog.V(2).Infof("Could not update health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
-				saName, clusterName, err)
-			return err
+		// The roleRef cannot be updated, therefore if the existing roleRef is different, the existing rolebinding
+		// must be deleted and recreated with the correct roleRef
+		if !reflect.DeepEqual(existingBinding.RoleRef, binding.RoleRef) {
+			err = clientset.RbacV1().ClusterRoleBindings().Delete(existingBinding.Name, &metav1.DeleteOptions{})
+			if err != nil {
+				glog.V(2).Infof("Could not delete existing health check cluster role binding for service account %s in joining cluster %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
+			_, err = clientset.RbacV1().ClusterRoleBindings().Create(binding)
+			if err != nil {
+				glog.V(2).Infof("Could not create health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
+		} else {
+			existingBinding.Subjects = binding.Subjects
+			_, err := clientset.RbacV1().ClusterRoleBindings().Update(existingBinding)
+			if err != nil {
+				glog.V(2).Infof("Could not update health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
+					saName, clusterName, err)
+				return err
+			}
 		}
 	default:
-		_, err = clientset.RbacV1().ClusterRoleBindings().Create(&binding)
+		_, err = clientset.RbacV1().ClusterRoleBindings().Create(binding)
 		if err != nil {
 			glog.V(2).Infof("Could not create health check cluster role binding for service account: %s in joining cluster: %s due to: %v",
 				saName, clusterName, err)
@@ -816,7 +865,7 @@ func createHealthCheckClusterRoleAndBinding(clientset client.Interface, saName, 
 // namespace.
 func populateSecretInHostCluster(clusterClientset, hostClientset client.Interface,
 	saName, namespace, joiningClusterName, secretName string,
-	dryRun, errorOnExisting bool) (*corev1.Secret, error) {
+	dryRun bool) (*corev1.Secret, error) {
 	if dryRun {
 		dryRunSecret := &corev1.Secret{}
 		dryRunSecret.Name = secretName
@@ -867,25 +916,6 @@ func populateSecretInHostCluster(clusterClientset, hostClientset client.Interfac
 		v1Secret.Name = secretName
 	}
 
-	if secretName != "" {
-		existingSecret, err := hostClientset.CoreV1().Secrets(namespace).Get(secretName, metav1.GetOptions{})
-		switch {
-		case err != nil && !apierrors.IsNotFound(err):
-			glog.V(2).Infof("Could not get secret %s in host cluster: %v", secretName, err)
-			return nil, err
-		case err == nil && errorOnExisting:
-			return nil, errors.Errorf("secret %s already exists in host cluster", secretName)
-		case err == nil:
-			existingSecret.Data = v1Secret.Data
-			v1SecretResult, err := hostClientset.CoreV1().Secrets(namespace).Update(existingSecret)
-			if err != nil {
-				glog.V(2).Infof("Could not update secret %s in host cluster: %v", secretName, err)
-				return nil, err
-			}
-			glog.V(2).Infof("Updated secret in host cluster named: %s", secretName)
-			return v1SecretResult, nil
-		}
-	}
 	v1SecretResult, err := hostClientset.CoreV1().Secrets(namespace).Create(&v1Secret)
 	if err != nil {
 		glog.V(2).Infof("Could not create secret in host cluster: %v", err)
